@@ -37,7 +37,7 @@ class Calculator:
         self.setup_firebase()
     
     def setup_firebase(self):
-        cred = credentials.Certificate("path/to/serviceAccountKey.json")
+        cred = credentials.Certificate("E:\Project-1\virtual-calc-firebase-adminsdk-we75j-7d8e9c1432.json")
         firebase_admin.initialize_app(cred)
         self.db = firestore.client()
 
