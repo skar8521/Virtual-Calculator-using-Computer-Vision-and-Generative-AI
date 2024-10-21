@@ -11,12 +11,13 @@ from warnings import filterwarnings
 import pyttsx3
 import firebase_admin
 from firebase_admin import credentials, firestore
-import asyncio
 import pytesseract
 import matplotlib.pyplot as plt
 import io
+import threading
 
 filterwarnings(action='ignore')
+
 
 class Calculator:
     def __init__(self):
@@ -34,12 +35,20 @@ class Calculator:
         self.brush_size = 5
         self.history = []
         self.engine = pyttsx3.init()
+        self.result_placeholder = None
+
+        # Initialize Firebase
         self.setup_firebase()
-    
+
     def setup_firebase(self):
-        cred = credentials.Certificate("E:/Project-1/virtual-calc-firebase-adminsdk-we75j-7d8e9c1432.json")
-        firebase_admin.initialize_app(cred)
-        self.db = firestore.client()
+        try:
+            # Ensure that the Firebase service account file exists at this path.
+            cred = credentials.Certificate("E:/Project-1/virtual-calc-firebase-adminsdk-we75j-7d8e9c1432.json")
+            firebase_admin.initialize_app(cred)
+            self.db = firestore.client()
+            print("Firebase initialized successfully.")
+        except Exception as e:
+            print(f"Error initializing Firebase: {e}")
 
     def speak(self, text):
         self.engine.say(text)
@@ -94,37 +103,45 @@ class Calculator:
     def identify_fingers(self):
         self.fingers = []
         if self.landmark_list:
-            for id in [4,8,12,16,20]:
+            for id in [4, 8, 12, 16, 20]:
                 if id != 4:
-                    if self.landmark_list[id][2] < self.landmark_list[id-2][2]:
+                    if self.landmark_list[id][2] < self.landmark_list[id - 2][2]:
                         self.fingers.append(1)
                     else:
                         self.fingers.append(0)
                 else:
-                    if self.landmark_list[id][1] < self.landmark_list[id-2][1]:
+                    if self.landmark_list[id][1] < self.landmark_list[id - 2][1]:
                         self.fingers.append(1)
                     else:
                         self.fingers.append(0)
             for i in range(5):
                 if self.fingers[i] == 1:
-                    cx, cy = self.landmark_list[i*4][1], self.landmark_list[i*4][2]
-                    cv2.circle(self.img, (cx, cy), 5, (255,0,255), 1)
+                    cx, cy = self.landmark_list[i * 4][1], self.landmark_list[i * 4][2]
+                    cv2.circle(self.img, (cx, cy), 5, (255, 0, 255), 1)
 
     def handle_drawing_mode(self):
+        # Both Thumb and Index Fingers Up --> Drawing Mode
         if sum(self.fingers) == 2 and self.fingers[0] == self.fingers[1] == 1:
             cx, cy = self.landmark_list[8][1], self.landmark_list[8][2]
             if self.p1 == 0 and self.p2 == 0:
                 self.p1, self.p2 = cx, cy
             cv2.line(self.imgCanvas, (self.p1, self.p2), (cx, cy), self.current_color, self.brush_size)
             self.p1, self.p2 = cx, cy
-        elif sum(self.fingers) == 3 and all(f == 1 for f in self.fingers[:3]):
-            self.p1, self.p2 = 0, 0
+
+        # Both Index and Middle Fingers Up --> Trigger AI Analysis
+        elif sum(self.fingers) == 2 and self.fingers[1] == self.fingers[2] == 1:
+            # Call the AI analysis function
+            self.analyze_image_async()
+
+        # Erasing mode: Thumb and Middle Fingers Up
         elif sum(self.fingers) == 2 and self.fingers[0] == self.fingers[2] == 1:
             cx, cy = self.landmark_list[12][1], self.landmark_list[12][2]
             if self.p1 == 0 and self.p2 == 0:
                 self.p1, self.p2 = cx, cy
-            cv2.line(self.imgCanvas, (self.p1, self.p2), (cx, cy), (0,0,0), 15)
+            cv2.line(self.imgCanvas, (self.p1, self.p2), (cx, cy), (0, 0, 0), 15)
             self.p1, self.p2 = cx, cy
+
+        # Reset mode: Thumb and Pinky Fingers Up
         elif sum(self.fingers) == 2 and self.fingers[0] == self.fingers[4] == 1:
             self.imgCanvas = np.zeros((550, 950, 3), dtype=np.uint8)
 
@@ -156,10 +173,15 @@ class Calculator:
             with open("calculation_history.txt", "rb") as file:
                 st.download_button('Download History', file, 'calculation_history.txt')
 
-    async def analyze_image_async(self):
-        response = await asyncio.to_thread(self.analyze_image_with_genai)
-        self.result_placeholder.write(f"Result: {response}")
-        self.speak("Analysis complete.")
+    def analyze_image_async(self):
+        def analyze():
+            result = self.analyze_image_with_genai()
+            self.result_placeholder.write(f"Result: {result}")
+            self.speak("Analysis complete.")
+
+        # Run the analysis in a separate thread
+        analysis_thread = threading.Thread(target=analyze)
+        analysis_thread.start()
 
     def main(self):
         col1, _, col3 = st.columns([0.8, 0.02, 0.18])
@@ -169,12 +191,11 @@ class Calculator:
             st.markdown('<h5 style="text-position:center;color:green;">OUTPUT:</h5>', unsafe_allow_html=True)
             self.result_placeholder = st.empty()
 
-        frame_count = 0
         while True:
             if not self.cap.isOpened():
                 add_vertical_space(5)
-                st.markdown('<h4 style="text-position:center; color:orange;">Error: Could not open webcam. \
-                            Please ensure your webcam is connected and try again</h4>', unsafe_allow_html=True)
+                st.markdown('<h4 style="text-position:center; color:orange;">Error: Could not open webcam. '
+                            'Please ensure your webcam is connected and try again</h4>', unsafe_allow_html=True)
                 break
 
             self.process_frame()
@@ -187,16 +208,13 @@ class Calculator:
             img_display = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
             stframe.image(img_display, channels="RGB")
 
-            frame_count += 1
-            if frame_count % 60 == 0:  # Analyze every 60 frames (~2 seconds)
-                asyncio.run(self.analyze_image_async())
-            
-            # Handle user input for exiting the loop (e.g., pressing 'q')
+            # Exit loop if 'q' is pressed
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
 
         self.cap.release()
         cv2.destroyAllWindows()
+
 
 try:
     calc = Calculator()
@@ -205,4 +223,5 @@ try:
 except Exception as e:
     add_vertical_space(5)
     st.markdown(f'<h5 style="text-position:center;color:orange;">{e}</h5>', unsafe_allow_html=True)
-    calc.speak("An error occurred. Please try again.")
+    if 'calc' in locals():
+        calc.speak("An error occurred. Please try again.")
