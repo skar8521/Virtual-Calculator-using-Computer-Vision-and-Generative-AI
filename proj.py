@@ -159,11 +159,17 @@ class Calculator:
         # Both Thumb and Middle Fingers Up ---> Erase the Drawing Lines
         elif sum(self.fingers) == 2 and self.fingers[0]==self.fingers[2]==1:
             cx, cy = self.landmark_list[12][1], self.landmark_list[12][2]
+
+            # Calculate the Distance Between Thumb and Middle Finger for Dynamic Eraser Size
+            thumb_tip = self.landmark_list[4][1:]
+            middle_tip = self.landmark_list[12][1:]
+            distance = int(np.sqrt((thumb_tip[0] - middle_tip[0])**2 + (thumb_tip[1] - middle_tip[1])**2))
+            eraser_thickness = max(15, min(50, distance))
         
             if self.p1 == 0 and self.p2 == 0:
                 self.p1, self.p2 = cx, cy
 
-            cv2.line(img=self.imgCanvas, pt1=(self.p1,self.p2), pt2=(cx,cy), color=(0,0,0), thickness=15)
+            cv2.line(img=self.imgCanvas, pt1=(self.p1,self.p2), pt2=(cx,cy), color=(0,0,0), thickness=eraser_thickness)
 
             self.p1,self.p2 = cx,cy
         
