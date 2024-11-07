@@ -58,7 +58,7 @@ class Calculator:
         # Initializes a MediaPipe Hand object
         self.mphands = hands.Hands(max_num_hands=1, min_detection_confidence=0.75)
 
-        # Set Drwaing Origin to Zero
+        # Set Drawing Origin to Zero
         self.p1, self.p2 = 0, 0
 
         # Set Previous Time is Zero for FPS
@@ -69,6 +69,18 @@ class Calculator:
 
         # Initialize a List for History
         self.history = []
+
+        # Calibration Data
+        self.calibration_data = {
+            'thumb_open_threshold': None,
+            'index_open_threshold': None,
+            'middle_open_threshold': None,
+            'ring_open_threshold': None,
+            'pinky_open_threshold': None
+        }
+
+        # Calibration Flag
+        self.calibrated = False
 
 
     def process_frame(self):
@@ -107,25 +119,47 @@ class Calculator:
                     self.landmark_list.append([id, cx, cy])
 
 
+    def calibrate_gestures(self):
+        """
+        Calibrates the thresholds for recognizing open/closed positions for each finger.
+        Users need to keep their hand open during this process.
+        """
+        st.markdown(f'<h4 style="text-align:center;color:blue;">Calibration in Progress: Please keep your hand open...</h4>',
+                    unsafe_allow_html=True)
+        
+        # Capture Calibration Data
+        if self.landmark_list:
+            # Set thresholds based on the open hand position
+            self.calibration_data['thumb_open_threshold'] = self.landmark_list[4][1] - self.landmark_list[3][1]
+            self.calibration_data['index_open_threshold'] = self.landmark_list[8][2] - self.landmark_list[6][2]
+            self.calibration_data['middle_open_threshold'] = self.landmark_list[12][2] - self.landmark_list[10][2]
+            self.calibration_data['ring_open_threshold'] = self.landmark_list[16][2] - self.landmark_list[14][2]
+            self.calibration_data['pinky_open_threshold'] = self.landmark_list[20][2] - self.landmark_list[18][2]
+            
+            # Mark Calibration as Complete
+            self.calibrated = True
+            st.markdown(f'<h4 style="text-align:center;color:green;">Calibration Complete!</h4>',
+                        unsafe_allow_html=True)
+
+
     def identify_fingers(self):
 
         # Identify Each Fingers Open/Close Position
         self.fingers = []
 
         # Verify the Hands Detection in Web Camera
-        if self.landmark_list != []:
-            for id in [4,8,12,16,20]:
-
-                # Index Finger, Middle Finger, Ring Finger and Pinky Finger
-                if id != 4:
-                    if self.landmark_list[id][2] < self.landmark_list[id-2][2]:
+        if self.landmark_list != [] and self.calibrated:
+            for id in [4, 8, 12, 16, 20]:
+                threshold = 0
+                if id == 4:
+                    threshold = self.calibration_data['thumb_open_threshold']
+                    if (self.landmark_list[id][1] - self.landmark_list[id-1][1]) > threshold:
                         self.fingers.append(1)
                     else:
                         self.fingers.append(0)
-                        
-                # thumb Finger
                 else:
-                    if self.landmark_list[id][1] < self.landmark_list[id-2][1]:
+                    threshold = self.calibration_data[f'{["index", "middle", "ring", "pinky"][int((id-8)/4)]}_open_threshold']
+                    if (self.landmark_list[id][2] - self.landmark_list[id-2][2]) > threshold:
                         self.fingers.append(1)
                     else:
                         self.fingers.append(0)
@@ -139,25 +173,25 @@ class Calculator:
 
     def handle_drawing_mode(self):
 
-        # Both Thumb and Index Fingers Up in Drwaing Mode
-        if sum(self.fingers) == 2 and self.fingers[0]==self.fingers[1]==1:
+        # Both Thumb and Index Fingers Up in Drawing Mode
+        if sum(self.fingers) == 2 and self.fingers[0] == self.fingers[1] == 1:
             cx, cy = self.landmark_list[8][1], self.landmark_list[8][2]
             
             if self.p1 == 0 and self.p2 == 0:
                 self.p1, self.p2 = cx, cy
 
-            cv2.line(img=self.imgCanvas, pt1=(self.p1,self.p2), pt2=(cx,cy), color=(255,0,255), thickness=5)
+            cv2.line(img=self.imgCanvas, pt1=(self.p1, self.p2), pt2=(cx, cy), color=(255, 0, 255), thickness=5)
 
-            self.p1,self.p2 = cx,cy
+            self.p1, self.p2 = cx, cy
         
 
         # Thumb, Index & Middle Fingers UP ---> Disable the Points Connection
-        elif sum(self.fingers) == 3 and self.fingers[0]==self.fingers[1]==self.fingers[2]==1:
+        elif sum(self.fingers) == 3 and self.fingers[0] == self.fingers[1] == self.fingers[2] == 1:
             self.p1, self.p2 = 0, 0
         
 
         # Both Thumb and Middle Fingers Up ---> Erase the Drawing Lines
-        elif sum(self.fingers) == 2 and self.fingers[0]==self.fingers[2]==1:
+        elif sum(self.fingers) == 2 and self.fingers[0] == self.fingers[2] == 1:
             cx, cy = self.landmark_list[12][1], self.landmark_list[12][2]
 
             # Calculate the Distance Between Thumb and Middle Finger for Dynamic Eraser Size
@@ -169,14 +203,14 @@ class Calculator:
             if self.p1 == 0 and self.p2 == 0:
                 self.p1, self.p2 = cx, cy
 
-            cv2.line(img=self.imgCanvas, pt1=(self.p1,self.p2), pt2=(cx,cy), color=(0,0,0), thickness=eraser_thickness)
+            cv2.line(img=self.imgCanvas, pt1=(self.p1, self.p2), pt2=(cx, cy), color=(0, 0, 0), thickness=eraser_thickness)
 
-            self.p1,self.p2 = cx,cy
+            self.p1, self.p2 = cx, cy
         
 
         # Both Thumb and Pinky Fingers Up ---> Erase the Whole Thing (Reset)
-        elif sum(self.fingers) == 2 and self.fingers[0]==self.fingers[4]==1:
-            self.imgCanvas = np.zeros(shape=(550,950,3), dtype=np.uint8)
+        elif sum(self.fingers) == 2 and self.fingers[0] == self.fingers[4] == 1:
+            self.imgCanvas = np.zeros(shape=(550, 950, 3), dtype=np.uint8)
 
 
     def blend_canvas_with_feed(self):
@@ -191,7 +225,7 @@ class Calculator:
         _, imgInv = cv2.threshold(src=imgGray, thresh=50, maxval=255, type=cv2.THRESH_BINARY_INV)
 
         # Binary_Inverse Image Convert into BGR Image ---> Single Channel Value apply All 3 Channel [0,0,0] or [255,255,255]
-        # Bleding need same Channel for Both Images 
+        # Blending need same Channel for Both Images 
         imgInv = cv2.cvtColor(imgInv, cv2.COLOR_GRAY2BGR)
         
 
@@ -214,7 +248,7 @@ class Calculator:
         genai.configure(api_key=os.environ['GOOGLE_API_KEY'])
 
         # Initializes a Flash Generative Model
-        model = genai.GenerativeModel(model_name = 'gemini-1.5-flash')
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
 
         # Input Prompt
         prompt = "Analyze the image and provide the following:\n" \
@@ -257,6 +291,17 @@ class Calculator:
             st.markdown(f'<h5 style="text-position:center;color:green;">OUTPUT:</h5>', unsafe_allow_html=True)
             result_placeholder = st.empty()
 
+        # Perform Calibration Before Entering Main Loop
+        while not self.calibrated:
+            self.process_frame()
+            self.process_hands()
+            self.calibrate_gestures()
+
+            # Display the Output Frame in the Streamlit App
+            self.img = cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB)
+            stframe.image(self.img, channels="RGB")
+
+        # Main Loop After Calibration
         while True:
 
             if not self.cap.isOpened():
@@ -281,7 +326,7 @@ class Calculator:
             stframe.image(self.img, channels="RGB")
 
             # After Done Process with AI
-            if sum(self.fingers) == 2 and self.fingers[1]==self.fingers[2]==1:
+            if sum(self.fingers) == 2 and self.fingers[1] == self.fingers[2] == 1:
                 result = self.analyze_image_with_genai()
                 self.update_history(result)
                 result_placeholder.write(f"Result: {result}")
